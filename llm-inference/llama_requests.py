@@ -92,4 +92,7 @@ if __name__ == "__main__":
         temperature=args.temperature,
         top_p=args.top_p,
     )
-    print(json.dumps(results))
+    # print(results)
+
+### Example Usage
+# python llama_requests.py --max_token 512 --temperature 0.6 --top_p 0.9 --content "Describe this picture" --image_path ./image.png
