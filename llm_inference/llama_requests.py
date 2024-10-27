@@ -2,6 +2,7 @@
 import requests, base64
 import json
 import argparse
+
 from PIL import Image
 from io import BytesIO
 
@@ -39,7 +40,7 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p, ima
 
     response = requests.post(invoke_url, headers=headers, json=payload)
     content = ""
-    
+
     if stream:
         for line in response.iter_lines():
             if line:
