@@ -9,7 +9,7 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p, ima
     invoke_url = "https://ai.api.nvidia.com/v1/gr/meta/llama-3.2-90b-vision-instruct/chat/completions"
     stream = True
     if image is not None:
-        image = Image.fromarray(image.squeeze()).convert('RGB')
+        image = Image.fromarray(image.squeeze()*255).convert('RGB')
         buff = BytesIO()
         image.save(buff, format="PNG")
         buff.seek(0)
@@ -28,7 +28,7 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p, ima
       "messages": [
         {
           "role": "user",
-          "content": f'{prompts} <img src="data:image/png;base64,{image_b64}" />'
+          "content": f'{prompts} <img src="data:image/png;base64,{image_b64}" />',
         }
       ],
       "max_tokens": max_tokens,
@@ -39,8 +39,8 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p, ima
 
     response = requests.post(invoke_url, headers=headers, json=payload)
     content = ""
-    
-    if stream:
+
+    if stream and response.status_code == 200:
         for line in response.iter_lines():
             if line:
                 # print(line.decode("utf-8"))
@@ -49,7 +49,6 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p, ima
                 content += j["choices"][0]["delta"]["content"]
                 if j["choices"][0]["finish_reason"] == "stop":
                     break
-
     return content
 
 def parse_args():

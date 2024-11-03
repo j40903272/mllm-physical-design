@@ -2,7 +2,31 @@ from dataset.load_dataset import load_dataset
 from llm_inference.llama_requests import make_llama_requests
 import argparse
 from PIL import Image
+predicted_task = "Congestion Prediction"
+prompt = f"""
+### Task
+These images are used for {predicted_task} in electronic design automation (EDA). 
 
+### Task Description
+Congestion is defined as the overflow of routing demand over available routing resource in the routing stage of the back-end design. It is frequently adopted as the metric to evaluate routability, i.e., the prospective quality of routing based on the current design solution. The congestion prediction is necessary to guide the optimization in placement stage and reduce total turn-around time.
+
+### Input
+The first image is called Macro Region feature.
+The second image is called Rectangular Uniform wire Density (RUDY).
+The third image is called RUDY pin.
+
+
+### Instruction
+Act as a congestion prediction model (don't use random).
+Predict a congestion score based on the given images.
+
+The congestion level is defined as follows:
+- Low: 0 - 0.1
+- Moderate: 0.1 - 0.15
+- High: > 0.15
+
+Only give the congestion level answer in <answer>...</answer> tag.
+"""
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -61,6 +85,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    print(prompt)
     dataset = load_dataset(
             args.task, 
             args.ann_file, 
@@ -70,7 +95,8 @@ if __name__ == "__main__":
     for data in dataset:
         results = make_llama_requests(
             image_path=None,
-            prompts=args.content,
+            # prompts=args.content,
+            prompts=prompt,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
@@ -78,4 +104,4 @@ if __name__ == "__main__":
         )
         print(results)
 
-## python routability_IR_drop.py --max_token 512 --temperature 0.6 --top_p 0.9 --content "Describe this picture"
+## python routability_IR_drop_inferencing.py --max_token 512 --temperature 0.6 --top_p 0.9 --content "Describe this picture"
