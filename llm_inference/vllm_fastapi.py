@@ -2,6 +2,7 @@ import argparse
 import json
 import ssl
 import uuid
+
 from typing import AsyncGenerator
 
 import uvicorn
@@ -12,6 +13,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.pooling_params import PoolingParams
+
 #from vllm.usage.usage_lib import UsageContext
 from vllm.utils import random_uuid
 
@@ -111,6 +113,7 @@ async def generate(request: Request) -> Response:
         return results
 
 
+
 @app.put("/encode")
 async def encode(request: Request) -> Response:
     """Encode the input text and return embeddings.
@@ -145,6 +148,7 @@ async def encode(request: Request) -> Response:
 
     # Return the embeddings as a JSON response
     return JSONResponse(content={"embeddings": embeddings})
+
 
 
 def setup_vllm_engine(model: str, tokenizer: str):

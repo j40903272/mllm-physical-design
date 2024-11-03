@@ -3,12 +3,21 @@ import requests, base64
 import json
 import argparse
 
+from PIL import Image
+from io import BytesIO
 
-def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p): 
+def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p, image=None): 
     invoke_url = "https://ai.api.nvidia.com/v1/gr/meta/llama-3.2-90b-vision-instruct/chat/completions"
     stream = True
-    with open(image_path, "rb") as f:
-      image_b64 = base64.b64encode(f.read()).decode()
+    if image is not None:
+        image = Image.fromarray(image.squeeze()*255).convert('RGB')
+        buff = BytesIO()
+        image.save(buff, format="PNG")
+        buff.seek(0)
+        image_b64 = base64.b64encode(buff.read()).decode()
+    else:
+        with open(image_path, "rb") as f:
+          image_b64 = base64.b64encode(f.read()).decode()
 
     headers = {
       "Authorization": "Bearer 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",
@@ -20,7 +29,7 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p):
       "messages": [
         {
           "role": "user",
-          "content": f'{prompts} <img src="data:image/png;base64,{image_b64}" />'
+          "content": f'{prompts} <img src="data:image/png;base64,{image_b64}" />',
         }
       ],
       "max_tokens": max_tokens,
@@ -32,7 +41,7 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p):
     response = requests.post(invoke_url, headers=headers, json=payload)
     content = ""
 
-    if stream:
+    if stream and response.status_code == 200:
         for line in response.iter_lines():
             if line:
                 # print(line.decode("utf-8"))
@@ -41,7 +50,6 @@ def make_llama_requests(image_path, prompts, max_tokens, temperature, top_p):
                 content += j["choices"][0]["delta"]["content"]
                 if j["choices"][0]["finish_reason"] == "stop":
                     break
-
     return content
 
 def parse_args():
