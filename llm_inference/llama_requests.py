@@ -2,6 +2,7 @@
 import requests, base64
 import json
 import argparse
+
 from PIL import Image
 from io import BytesIO
 

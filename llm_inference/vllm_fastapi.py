@@ -1,6 +1,8 @@
 import argparse
 import json
 import ssl
+import uuid
+
 from typing import AsyncGenerator
 
 import uvicorn
@@ -10,6 +12,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
+from vllm.pooling_params import PoolingParams
+
 #from vllm.usage.usage_lib import UsageContext
 from vllm.utils import random_uuid
 
@@ -107,6 +111,44 @@ async def generate(request: Request) -> Response:
             for e, prompt in enumerate(prompts)
         ])
         return results
+
+
+
+@app.put("/encode")
+async def encode(request: Request) -> Response:
+    """Encode the input text and return embeddings.
+
+    The request should be a JSON object with the following fields:
+    - input: the text to encode.
+    """
+    request_dict = await request.json()
+
+    # Extract input text from request
+    input_text = request_dict.get("input", "")
+
+    # Generate a unique request_id using uuid
+    request_id = str(uuid.uuid4())
+
+    # Start the encoding process
+    results_generator = engine.encode(input_text, PoolingParams(), request_id)
+
+    final_output = None
+
+    async for request_output in results_generator:
+        if await request.is_disconnected():
+            # Abort the request if the client disconnects
+            await engine.abort(request_id)
+            return Response(status_code=499)
+        final_output = request_output
+
+    assert final_output is not None
+
+    # Assuming the final_output contains the embeddings as `embeddings`
+    embeddings = final_output.embeddings
+
+    # Return the embeddings as a JSON response
+    return JSONResponse(content={"embeddings": embeddings})
+
 
 
 def setup_vllm_engine(model: str, tokenizer: str):
