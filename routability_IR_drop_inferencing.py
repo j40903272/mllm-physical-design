@@ -1,5 +1,6 @@
 from dataset.load_dataset import load_dataset
 from llm_inference.llama_requests import make_llama_requests
+from llm_inference.gpt4o_requests import make_gpt4o_requests
 import argparse
 from PIL import Image
 predicted_task = "Congestion Prediction"
@@ -29,6 +30,13 @@ Only give the congestion level answer in <answer>...</answer> tag.
 """
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model", 
+        default = 'gpt4',
+        type = str,
+        help = "Task Name",
+        choices = ['gpt4', 'llama']
+    )
     parser.add_argument(
         "--task", 
         default = 'congestion',
@@ -85,7 +93,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    print(prompt)
+    # print(prompt)
     dataset = load_dataset(
             args.task, 
             args.ann_file, 
@@ -93,15 +101,28 @@ if __name__ == "__main__":
             return_dict=True
     )
     for data in dataset:
-        results = make_llama_requests(
-            image_path=None,
-            # prompts=args.content,
-            prompts=prompt,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            image=data["label"]  
-        )
-        print(results)
+        if args.model == "llama":
+            results = make_llama_requests(
+                image_path=None,
+                # prompts=args.content,
+                prompts=prompt,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                data=data["label"]  
+            )
+            print(results)
+        elif args.model == "gpt4":
+            results = make_gpt4o_requests(
+                image_path=None,
+                # prompts=args.content,
+                prompts=prompt,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                data=data
+            )
+            print(results)
+
 
 ## python routability_IR_drop_inferencing.py --max_token 512 --temperature 0.6 --top_p 0.9 --content "Describe this picture"
