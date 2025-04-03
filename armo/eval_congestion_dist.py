@@ -1,27 +1,31 @@
 import os
-import torch
-import torch.nn as nn
+import models
+import datasets
 import numpy as np
+import pandas as pd
 from safetensors.torch import load_file
 from argparse import ArgumentParser
 from tqdm.auto import tqdm
 from scipy.stats import spearmanr
-import pandas as pd
 from glob import glob
-from torch import nn
-import torch.nn.functional as F
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModel, AutoConfig, AutoProcessor
-import datasets
 from PIL import Image
 from scipy import stats
 from timm.models.vision_transformer import Mlp
 from timm.layers import trunc_normal_
-from torch.utils.data import DataLoader, Dataset
 from transformers import get_scheduler
 from pytorch_msssim import SSIM
-import models
 from diffusers import UNet2DConditionModel
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.distributed as dist
+from torch.utils.data import DataLoader, Dataset
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import Dataset, DataLoader, DistributedSampler
+
 
 
 # Enable TF32 for improved performance on Ampere GPUs
@@ -384,6 +388,21 @@ class Unetfeats(nn.Module):
         return F.sigmoid(out)
             
             
+class CongestionEvalDataset(torch.utils.data.Dataset):
+    def __init__(self, dataframe):
+        self.df = dataframe.reset_index(drop=True)
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        return {
+            "id": row["id"],
+            "config": id_to_configs(row["id"])
+        }
+
+
 def load_components(args, device):
     print("Loading regression layer...")
     regression_layer = torch.load(args.regression_layer_path, map_location=device)["weight"]
@@ -433,17 +452,34 @@ def load_testing_data():
     return testing_data
 
 
-def evaluate(args):
-    device = f"cuda:{args.device}" if args.device >= 0 else "cpu"
-    model, processor, gating_network, decoder, regression_layer = load_components(args, device)
-    testing_data = load_testing_data()
-    ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+def evaluate_distributed(args):
+    dist.init_process_group("nccl")
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f"cuda:{local_rank}")
 
-    metric = 0.0
-    for _, example in tqdm(testing_data.iterrows(), desc="Test cases", total=len(testing_data)):
-        cur_msgs = [id_to_configs(example["id"])]
+    model, processor, gating_network, decoder, regression_layer = load_components(args, device)
+
+    # Wrap model and decoder with DDP
+    model = DDP(model, device_ids=[local_rank])
+    decoder = DDP(decoder, device_ids=[local_rank])
+    gating_network = DDP(gating_network, device_ids=[local_rank])
+
+    # Load data and create sampler
+    df = load_testing_data()
+    dataset = CongestionEvalDataset(df)
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False)
+    dataloader = DataLoader(dataset, sampler=sampler, batch_size=1)
+
+    ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+    local_metric = 0.0
+
+    for e, batch in enumerate(dataloader):
+        image_id = batch["id"][0]
+        cur_msgs = [batch["config"][0]]
         user_message = "Can you predict the congestion level of this sample from the given images?"
-        image_id = example["id"]
 
         numpy_images = np.load(f"/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/dataset/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
         label_image = np.load(f"/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/dataset/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
@@ -454,13 +490,12 @@ def evaluate(args):
 
         image_features = [Image.fromarray(np.uint8(image * 255)) for image in batch_image]
         cur_msgs += ["(<image>./</image>)" for _ in batch_image] + [user_message]
-
         msg = {"role": "user", "content": "\n".join(cur_msgs)}
 
         conv_formatted = processor.tokenizer.apply_chat_template([msg], tokenize=False, add_generation_prompt=False)
         conv_tokenized = processor([conv_formatted], image_features, return_tensors="pt").to(device)
         input_ids = conv_tokenized.data["input_ids"]
-        position_ids = torch.arange(conv_tokenized.data["input_ids"].size(1)).long().unsqueeze(0).to(device)
+        position_ids = torch.arange(input_ids.size(1)).long().unsqueeze(0).to(device)
         conv_tokenized.data["position_ids"] = position_ids
 
         with torch.no_grad():
@@ -476,10 +511,22 @@ def evaluate(args):
 
             prediction = decoder(image_tensors, multi_rewards, gating_weights, last_token_embedding.unsqueeze(0))
             ssim = ssim_fn(prediction, label_image)
-            print(f"SSIM: {ssim.item()}")
-            metric += ssim.item()
+            local_metric += ssim.item()
 
-    print("===> Avg. SSIM: {:.4f}".format(metric / len(testing_data)))
+            interval = len(dataloader) // 20
+            if rank == 0 and e % interval == 0:
+                print(f"{e}/{len(dataloader)}")
+
+    # Reduce metrics across all ranks
+    metric_tensor = torch.tensor(local_metric, dtype=torch.float32, device=device)
+    dist.all_reduce(metric_tensor, op=dist.ReduceOp.SUM)
+
+    # Print only from rank 0
+    if rank == 0:
+        avg_ssim = metric_tensor.item() / len(dataloader)
+        print("===> Avg. SSIM: {:.4f}".format(avg_ssim))
+
+    dist.destroy_process_group()
 
 
 def main():
@@ -498,7 +545,7 @@ def main():
     parser.add_argument("--embed_dim", type=int, default=3584)
     args = parser.parse_args()
 
-    evaluate(args)
+    evaluate_distributed(args)
 
 if __name__ == "__main__":
     main()
