@@ -37,9 +37,9 @@ class Unetfeats(nn.Module):
         config["out_channels"] = 1
         config["sample_size"] = 256
         config["block_out_channels"] = [
-            32, 64, 128, 256
+            32, 64, 128, 128
         ]
-        config["cross_attention_dim"] = 1536
+        config["cross_attention_dim"] = 512
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
         self.cross_attention_dim = config["cross_attention_dim"]
@@ -48,6 +48,8 @@ class Unetfeats(nn.Module):
         self.text_encoder = T5EncoderModel.from_pretrained(text_encoder_path, subfolder="text_encoder_3")
         self.down_proj = Mlp(in_features=4096, hidden_features=self.cross_attention_dim, out_features=self.cross_attention_dim)
         
+        for param in self.text_encoder.parameters():
+            param.requires_grad = False
         
     def forward(self, images, tokens):
         # Pass through the model
@@ -103,10 +105,9 @@ class CongestionDataset(Dataset):
             image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
             label = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
             image = Image.fromarray(np.uint8(image * 255)).convert('RGB')
-            label = Image.fromarray(np.uint8(label * 255)).convert('RGB')
             if transform:
-                image = transform(image)
-                label = transform(label)
+                image = transform(image).float()
+                label = transform(label).float()
             
             self.images.append(image)
             self.labels.append(label)
@@ -127,7 +128,7 @@ parser = ArgumentParser()
 parser.add_argument("--unet_path", type=str, default="/data1/felixchao/diffusion")
 parser.add_argument("--text_encoder_path", type=str, default="/data1/felixchao/sd3_5")
 parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/armo/dataset/train_feature_desc.csv")
-parser.add_argument("--batch_size", type=int, default=8)
+parser.add_argument("--batch_size", type=int, default=2)
 parser.add_argument("--epochs", type=int, default=40)
 parser.add_argument("--lr", type=float, default=2e-4)
 parser.add_argument("--latent_dim", type=int, default=25)
