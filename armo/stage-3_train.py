@@ -21,11 +21,6 @@ from transformers import get_scheduler
 from pytorch_msssim import SSIM
 from diffusers import UNet2DConditionModel
 
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
-
-
 
 # Enable TF32 for improved performance on Ampere GPUs
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -94,87 +89,77 @@ def validation(model, test_loader, device, ssim_fn):
     return val_ssim_score / len(test_loader)
 
 
-def train(model, dataloader, optimizer, loss_fn, lr_scheduler, device, args):
-    ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+# Set up argument parser
+parser = ArgumentParser()
+parser.add_argument("--dataset", type=str, default="/data1/felixchao/last_hidden_feats.safetensors")
+parser.add_argument("--batch_size", type=int, default=4)
+parser.add_argument("--epochs", type=int, default=40)
+parser.add_argument("--lr", type=float, default=2e-4)
+parser.add_argument("--latent_dim", type=int, default=25)
+parser.add_argument("--device", type=int, default=0)
+parser.add_argument("--embed_dim", type=int, default=3584)
+args = parser.parse_args()
 
-    for epoch in range(args.epochs):
-        model.train()
-        epoch_loss = 0
-
-        for batch in dataloader:
-            images, image_tokens, gating_weights, multi_rewards, labels = batch
-            images = images.to(device)
-            image_tokens = image_tokens.to(device)
-            gating_weights = gating_weights.to(device)
-            multi_rewards = multi_rewards.to(device)
-            labels = labels.to(device)
-
-            optimizer.zero_grad()
-            output = model(images, multi_rewards, gating_weights, image_tokens)
-            loss = loss_fn(output.squeeze(), labels.squeeze())
-            loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            epoch_loss += loss.item()
-
-        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_loader)}")
-        if epoch % 10 == 0:
-            save_path = f"/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/armo/decoder/epoch-{epoch}.pth"
-            torch.save(model.state_dict(), save_path)
-            print(f"Epoch {epoch}: Model saved at {save_path}")
+device = f"cuda:{args.device}" if args.device >= 0 else "cpu"
 
 
-def main(args):
+# Load embeddings
+print("Loading embeddings...")
+samples = load_file(args.dataset)
 
-    device = torch.device("cuda:0")
-    print("Loading embeddings...")
+images = samples.pop("images")
+last_hidden_tokens = samples.pop("last_hidden_tokens")
+gating_weights = samples.pop("gating_weights")
+multi_rewards = samples.pop("multi_rewards")
+labels = samples.pop("label")
 
-    samples = load_file(args.dataset)
-    images = samples.pop("images")
-    last_hidden_tokens = samples.pop("last_hidden_tokens")
-    gating_weights = samples.pop("gating_weights")
-    multi_rewards = samples.pop("multi_rewards")
-    labels = samples.pop("label")
+# Load Dataset
+print("Dataset preparing...")
 
-    # Dataset
-    print("Dataset preparing...")
-    train_dataset = CongestionDataset(images, last_hidden_tokens, gating_weights, multi_rewards, labels)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    print("Training data size:", len(train_dataset))
+train_dataset = CongestionDataset(images, last_hidden_tokens, gating_weights, multi_rewards, labels)
 
-    # Model
-    model = Unetfeats(
-        unet_path="stable-diffusion-v1-5/stable-diffusion-v1-5",
-        embed_dim=args.embed_dim,
-        latent_dim=args.latent_dim
-    ).to(device)
+train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=0)
-    loss_fn = nn.MSELoss()
-    lr_scheduler = get_scheduler(
-        name="cosine",
-        optimizer=optimizer,
-        num_warmup_steps=20,
-        num_training_steps=args.epochs * len(train_loader)
-    )
+print("Training data size:", len(train_dataset))
 
-    train(model, train_loader, optimizer, loss_fn, lr_scheduler, device, args)
+# Initialize model
 
+model = Unetfeats(unet_path="/data1/felixchao/diffusion", embed_dim=args.embed_dim, latent_dim=args.latent_dim).to(device)
 
+optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=0)
+loss_fn = nn.MSELoss()
+num_epochs = args.epochs
+num_training_steps = num_epochs * len(train_loader)
+lr_scheduler = get_scheduler(
+    name="cosine", optimizer=optimizer, num_warmup_steps=20, num_training_steps=num_training_steps
+)
 
-def run():
-    parser = ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/armo/dataset/last_hidden_feats.safetensors")
-    parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--epochs", type=int, default=40)
-    parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--latent_dim", type=int, default=25)
-    parser.add_argument("--embed_dim", type=int, default=3584)
-    args = parser.parse_args()
-    main(args)
+# Train model
+print("Start Training...")
 
+best_ssim = 0.0
+ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
 
-if __name__ == "__main__":
-    run()
-
-
+for epoch in tqdm(range(num_epochs), desc="Training Epochs"):
+    model.train()
+    epoch_loss = 0
+    
+    for batch in train_loader:
+        images, image_tokens, gating_weights, multi_rewards, labels = batch
+        images, image_tokens, gating_weights, multi_rewards, labels = images.to(device), image_tokens.to(device), gating_weights.to(device), multi_rewards.to(device), labels.to(device)
+        
+        optimizer.zero_grad()
+        output = model(images, multi_rewards, gating_weights, image_tokens)
+        loss = loss_fn(output.squeeze(), labels.squeeze())
+        print(f"Epoch {epoch + 1}/{num_epochs}, Batch Loss: {loss.item()}")
+        epoch_loss += loss.item()
+        loss.backward()
+        optimizer.step()
+        lr_scheduler.step()
+        
+    print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_loader)}")  
+     
+    if epoch % 10 == 0:
+        model.eval()
+        torch.save(model.state_dict(), "/home/felixchaotw/mllm-physical-design/armo/decoder/best_model.pth")
+        print("Model saved")

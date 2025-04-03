@@ -384,122 +384,211 @@ class Unetfeats(nn.Module):
         return F.sigmoid(out)
             
             
-def load_components(args, device):
-    print("Loading regression layer...")
-    regression_layer = torch.load(args.regression_layer_path, map_location=device)["weight"]
+# Set up argument parser
+parser = ArgumentParser()
+parser.add_argument("--device", type=int, default=0)
+parser.add_argument("--baseline", type=str, default="pretrained")
+parser.add_argument("--model_path", type=str, default="/data1/felixchao/minicpm")
+parser.add_argument("--regression_layer_path", type=str, default="/home/felixchaotw/mllm-physical-design/armo/regression_weights/MiniCPM-V-2_6_ArmoRM-Multi-Objective-Data-v0.1.pt")
+parser.add_argument("--gating_network_path", type=str, default="/home/felixchaotw/mllm-physical-design/armo/gating_weights/config_gating_network_MiniCPM-V-2_6.pt")
+parser.add_argument("--decoder_path", type=str, default="/home/felixchaotw/mllm-physical-design/armo/decoder/best_model.pth")
+parser.add_argument("--logit_scale", type=float, default=1)
+parser.add_argument("--temperature", type=float, default=10)
+parser.add_argument("--n_hidden", type=int, default=3)
+parser.add_argument("--hidden_size", type=int, default=1024)
+parser.add_argument("--dropout", type=float, default=0.2)
+parser.add_argument("--embed_dim", type=int, default=3584)
+args = parser.parse_args()
 
-    print("Loading model and processor...")
-    model = AutoModel.from_pretrained(
-        args.model_path,
-        torch_dtype=torch.bfloat16,
-        device_map=device,
-        attn_implementation="flash_attention_2",
-        trust_remote_code=True,
-    )
-    processor = AutoProcessor.from_pretrained(args.model_path, trust_remote_code=True)
+device = f"cuda:{args.device}" if args.device >= 0 else "cpu"
 
-    print("Loading gating network...")
-    gating_network = GatingNetwork(
-        args.embed_dim,
-        regression_layer.shape[0],
-        n_hidden=args.n_hidden,
-        hidden_dim=args.hidden_size,
-        logit_scale=args.logit_scale,
-        temperature=args.temperature,
-        dropout=args.dropout,
-    )
-    gating_network.load_state_dict(torch.load(args.gating_network_path, weights_only=True, map_location=device))
-    gating_network.to(device).eval()
+# Load regression layer
+print("Loading regression layer...")
+regression_layer = torch.load(args.regression_layer_path, map_location=device)["weight"]
 
-    print("Loading decoder...")
-    if args.baseline == "pure":
-        decoder = VisionDecoder([512, 256, 128, 64, 32, 16, 8], embed_dim=args.embed_dim)
-    else:
-        decoder = Unetfeats(unet_path="stable-diffusion-v1-5/stable-diffusion-v1-5", embed_dim=args.embed_dim, latent_dim=25)
-    decoder.load_state_dict(torch.load(args.decoder_path, weights_only=True, map_location=device))
-    decoder.to(device).eval()
-
-    return model, processor, gating_network, decoder, regression_layer
+n_attributes, hidden_size = regression_layer.shape
 
 
-def load_testing_data():
-    print("Loading testing dataset...")
-    testing_set = [
-        "/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/armo/dataset/test_df_a.csv",
-        "/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/armo/dataset/test_df_b.csv",
-    ]
-    testing_data = pd.concat([pd.read_csv(file) for file in testing_set])
-    print("Testing dataset loaded successfully! Total samples:", len(testing_data))
-    return testing_data
+# Load model and processor
+print("Loading model and processor...")
+model = AutoModel.from_pretrained(
+    args.model_path,
+    torch_dtype=torch.bfloat16,  # Use bfloat16 precision for model weights to save memory
+    device_map=device,
+    attn_implementation="flash_attention_2",  # Specify the attention implementation for efficiency
+    trust_remote_code=True,
+)
+
+processor = AutoProcessor.from_pretrained(
+    args.model_path, 
+    trust_remote_code=True,
+)
+
+# Load the gating network
+print("Loading gating network...")
+
+gating_network = GatingNetwork(
+    args.embed_dim,
+    regression_layer.shape[0],
+    n_hidden=args.n_hidden,
+    hidden_dim=args.hidden_size,
+    logit_scale=args.logit_scale,
+    temperature=args.temperature,
+    dropout=args.dropout,
+)
+
+gating_network.load_state_dict(torch.load(args.gating_network_path, weights_only=True, map_location=device))
+gating_network.to(device)
+gating_network.eval()
 
 
-def evaluate(args):
-    device = f"cuda:{args.device}" if args.device >= 0 else "cpu"
-    model, processor, gating_network, decoder, regression_layer = load_components(args, device)
-    testing_data = load_testing_data()
-    ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+# Load the gating network
+print("Loading Decoder...")
+if args.baseline == "pure":
+    decoder = VisionDecoder([512, 256, 128, 64, 32, 16, 8], embed_dim=args.embed_dim)
+else:
+    decoder = Unetfeats(unet_path="/data1/felixchao/diffusion", embed_dim=args.embed_dim, latent_dim=25)
+decoder.load_state_dict(torch.load(args.decoder_path, weights_only=True, map_location=device))
+decoder.to(device)
+decoder.eval()
 
-    metric = 0.0
-    for _, example in tqdm(testing_data.iterrows(), desc="Test cases", total=len(testing_data)):
-        cur_msgs = [id_to_configs(example["id"])]
+print("Model and gating network loaded successfully!")
+
+# Load the testing dataset
+print("Loading testing dataset...")
+
+testing_set = ["/home/felixchaotw/mllm-physical-design/armo/dataset/test_df_a.csv", "/home/felixchaotw/mllm-physical-design/armo/dataset/test_df_b.csv"]
+testing_data = pd.concat([pd.read_csv(file) for file in testing_set])
+
+
+print("Testing dataset loaded successfully!")
+print("Number of test cases:", len(testing_data))
+
+ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+metric = 0.0
+
+if args.baseline == "pretrained":
+    opt = {'task': 'congestion_gpdl', 'save_path': 'work_dir/congestion_gpdl/', 'pretrained': '/home/felixchaotw/CircuitNet/model/congestion.pth', 'max_iters': 200000, 'plot_roc': False, 'arg_file': None, 'cpu': False, 'dataroot': '../../training_set/congestion', 'ann_file_train': './files/train_N28.csv', 'ann_file_test': './files/test_N28.csv', 'dataset_type': 'CongestionDataset', 'batch_size': 16, 'aug_pipeline': ['Flip'], 'model_type': 'GPDL', 'in_channels': 3, 'out_channels': 1, 'lr': 0.0002, 'weight_decay': 0, 'loss_type': 'MSELoss', 'eval_metric': ['NRMS', 'SSIM', 'EMD'], 'ann_file': './files/test_N28.csv', 'test_mode': True}
+    model = models.__dict__["GPDL"](**opt)
+    model.init_weights(**opt)
+    model.to(device)
+    
+    for i, example in tqdm(testing_data.iterrows(), desc="Pretrained"):
+        numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{example['id']}")
+        label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{example['id']}").squeeze()
+        label_image = torch.tensor(label_image).unsqueeze(0).unsqueeze(1).float().to(device)
+        batch_image = numpy_images.transpose(2,0,1)
+        with torch.no_grad():
+            input_image = torch.tensor(batch_image).unsqueeze(0).float().to(device)
+            output_image = model(input_image)
+            ssim = ssim_fn(output_image, label_image)
+            metric += ssim.item()
+            
+elif args.baseline == "vision":
+    
+    for i, example in tqdm(testing_data.iterrows(), desc="Vision cases"):
+        cur_msgs = []
+        system_message = id_to_configs(example["id"])
         user_message = "Can you predict the congestion level of this sample from the given images?"
         image_id = example["id"]
-
-        numpy_images = np.load(f"/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/dataset/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
-        label_image = np.load(f"/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/dataset/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
+        numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
+        label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
         label_image = torch.tensor(label_image).unsqueeze(0).unsqueeze(1).float().to(device)
-        batch_image = numpy_images.transpose(2, 0, 1)
-        image_tensors = torch.tensor(batch_image).unsqueeze(0).float().to(device)
-        image_tensors = image_tensors * 2.0 - 1.0
+        batch_image = numpy_images.transpose(2,0,1)
+        image_features = []
+        
+        cur_msgs.append(system_message)
+        
+        for image in batch_image:
+            image_features.append(Image.fromarray(np.uint8(image * 255)))
+            cur_msgs.append("(<image>./</image>)")
 
-        image_features = [Image.fromarray(np.uint8(image * 255)) for image in batch_image]
-        cur_msgs += ["(<image>./</image>)" for _ in batch_image] + [user_message]
-
-        msg = {"role": "user", "content": "\n".join(cur_msgs)}
-
-        conv_formatted = processor.tokenizer.apply_chat_template([msg], tokenize=False, add_generation_prompt=False)
+        cur_msgs.append(user_message)
+        
+        msg = {
+            "role": "user",
+            "content": "\n".join(cur_msgs),
+        }
+        
+        conv_formatted = processor.tokenizer.apply_chat_template(
+            [msg], tokenize=False, add_generation_prompt=False
+        )
+        # Tokenize the formatted conversation and move tensors to the specified device
         conv_tokenized = processor([conv_formatted], image_features, return_tensors="pt").to(device)
-        input_ids = conv_tokenized.data["input_ids"]
-        position_ids = torch.arange(conv_tokenized.data["input_ids"].size(1)).long().unsqueeze(0).to(device)
-        conv_tokenized.data["position_ids"] = position_ids
 
+        input_ids = conv_tokenized.data["input_ids"]
+        position_ids = torch.arange(conv_tokenized.data["input_ids"].size(1)).long()
+        conv_tokenized.data["position_ids"] = position_ids.unsqueeze(0).to(device)
+            
         with torch.no_grad():
             output = model(data=conv_tokenized, output_hidden_states=True)
             last_hidden_state = output.hidden_states[-1][0].to(device)
 
-            gating_token_position = find_token_for_gating(input_ids[0].tolist(), processor.tokenizer.im_end_id)
+            # Find the position of the gating token and extract embeddings
+            gating_token_position = find_token_for_gating(
+                input_ids[0].tolist(), processor.tokenizer.im_end_id
+            )
             prompt_embedding = last_hidden_state[gating_token_position].float()
             last_token_embedding = last_hidden_state[-1].float()
+            
+            prediction = decoder(last_token_embedding.unsqueeze(0))
+            ssim = ssim_fn(prediction, label_image)
+            metric += ssim.item()
+else:
+    for i, example in tqdm(testing_data.iterrows(), desc="Test cases"):
+        cur_msgs = []
+        system_message = id_to_configs(example["id"])
+        user_message = "Can you predict the congestion level of this sample from the given images?"
+        image_id = example["id"]
+        numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
+        label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
+        label_image = torch.tensor(label_image).unsqueeze(0).unsqueeze(1).float().to(device)
+        batch_image = numpy_images.transpose(2,0,1)
+        image_tensors = torch.tensor(batch_image).unsqueeze(0).float().to(device)
+        image_tensors = image_tensors * 2.0 - 1.0
+        image_features = []
+        
+        cur_msgs.append(system_message)
+        
+        for image in batch_image:
+            image_features.append(Image.fromarray(np.uint8(image * 255)))
+            cur_msgs.append("(<image>./</image>)")
 
+        cur_msgs.append(user_message)
+        
+        msg = {
+            "role": "user",
+            "content": "\n".join(cur_msgs),
+        }
+        
+        conv_formatted = processor.tokenizer.apply_chat_template(
+            [msg], tokenize=False, add_generation_prompt=False
+        )
+        # Tokenize the formatted conversation and move tensors to the specified device
+        conv_tokenized = processor([conv_formatted], image_features, return_tensors="pt").to(device)
+
+        input_ids = conv_tokenized.data["input_ids"]
+        position_ids = torch.arange(conv_tokenized.data["input_ids"].size(1)).long()
+        conv_tokenized.data["position_ids"] = position_ids.unsqueeze(0).to(device)
+            
+        with torch.no_grad():
+            output = model(data=conv_tokenized, output_hidden_states=True)
+            last_hidden_state = output.hidden_states[-1][0].to(device)
+
+            # Find the position of the gating token and extract embeddings
+            gating_token_position = find_token_for_gating(
+                input_ids[0].tolist(), processor.tokenizer.im_end_id
+            )
+            prompt_embedding = last_hidden_state[gating_token_position].float()
+            last_token_embedding = last_hidden_state[-1].float()
+            
             gating_weights = gating_network(prompt_embedding.unsqueeze(0))
             multi_rewards = last_token_embedding.unsqueeze(0) @ regression_layer.T
-
+            
             prediction = decoder(image_tensors, multi_rewards, gating_weights, last_token_embedding.unsqueeze(0))
             ssim = ssim_fn(prediction, label_image)
             print(f"SSIM: {ssim.item()}")
             metric += ssim.item()
 
-    print("===> Avg. SSIM: {:.4f}".format(metric / len(testing_data)))
-
-
-def main():
-    parser = ArgumentParser()
-    parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--baseline", type=str, default="no")
-    parser.add_argument("--model_path", type=str, default="openbmb/MiniCPM-V-2_6")
-    parser.add_argument("--regression_layer_path", type=str, default="/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/armo/regression_weights/MiniCPM-V-2_6_ArmoRM-Multi-Objective-Data-v0.1.pt")
-    parser.add_argument("--gating_network_path", type=str, default="/lustre/fsw/portfolios/nvr/users/yundat/mllm-physical-design/armo/gating_weights/config_gating_network_MiniCPM-V-2_6.pt")
-    parser.add_argument("--decoder_path", type=str)
-    parser.add_argument("--logit_scale", type=float, default=1)
-    parser.add_argument("--temperature", type=float, default=10)
-    parser.add_argument("--n_hidden", type=int, default=3)
-    parser.add_argument("--hidden_size", type=int, default=1024)
-    parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--embed_dim", type=int, default=3584)
-    args = parser.parse_args()
-
-    evaluate(args)
-
-if __name__ == "__main__":
-    main()
+print("===> Avg. {}: {:.4f}".format("SSIM", metric / len(testing_data))) 
             
