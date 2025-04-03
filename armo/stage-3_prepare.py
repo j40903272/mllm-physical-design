@@ -184,19 +184,20 @@ def features_description(gating_weights, multi_rewards, label):
     Generate feature descriptions based on the gating weights, multi-rewards, and label
     """
     # Sort the gating weights and multi-rewards based on the gating weights
+    gating_weights = gating_weights.squeeze()
+    multi_rewards = multi_rewards.squeeze()
+    # Sort the gating weights and multi-rewards in descending order
     sorted_indices = torch.argsort(gating_weights, descending=True)
-    sorted_gating_weights = gating_weights[sorted_indices]
-    sorted_multi_rewards = multi_rewards[sorted_indices]
     desc = "The design has the following features:\n"
     # Generate the feature descriptions
     feature_description = []
     for i in range(len(sorted_indices)):
         feature_description.append(
-            f"{attributes[sorted_indices[i]]} has the value {sorted_multi_rewards[i]:.4f}, the feature importance is {sorted_gating_weights[i]:.4f};"
+            f"{attributes[sorted_indices[i]]} is {multi_rewards[sorted_indices[i]]:.4f}, the importance is {gating_weights[sorted_indices[i]]:.4f}."
         )
     # Add the predicted congestion level to the feature descriptions
     feature_description.append(f"Congestion level: {label:.2f}.")
-    return "".join(feature_description)
+    return desc + "\n".join(feature_description)
 
 
 # Set up argument parser
@@ -267,6 +268,7 @@ print("Testing dataset loaded successfully!")
 print("Number of test cases:", len(train_df))
 
 
+images_list = []
 image_tokens_embedding_list = []
 gating_weights_list = []
 multi_rewards_list = []
@@ -283,6 +285,7 @@ for i, example in tqdm(train_df.iterrows(), desc="Test cases"):
     label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
     label = torch.tensor(label_image).float()
     batch_image = numpy_images.transpose(2,0,1)
+    image_tensor = torch.tensor(batch_image).float()
     image_features = []
         
     cur_msgs.append(system_message)
@@ -334,7 +337,7 @@ for i, example in tqdm(train_df.iterrows(), desc="Test cases"):
         
         # Generate feature descriptions
         feat_desc = features_description(gating_weights, multi_rewards, pred_val * 100)
-        train_df.loc[i, "feature_description"] = feat_desc
+        train_df.loc[i, "prompt"] = feat_desc
         print(f"Sample {i+1} - {image_id}: {feat_desc}")
         
         image_tokens_embedding_list.append(image_tokens_embedding.cpu())
@@ -342,6 +345,7 @@ for i, example in tqdm(train_df.iterrows(), desc="Test cases"):
         multi_rewards_list.append(multi_rewards.squeeze().cpu())
         label_list.append(label.cpu())
         last_hidden_tokens_list.append(last_token_embedding.cpu())
+        images_list.append(image_tensor)
         
 # Convert lists of embeddings to tensors
 image_tokens_embedding_tensors = torch.stack(image_tokens_embedding_list)
@@ -349,15 +353,10 @@ gating_weights_embeddings = torch.stack(gating_weights_list)
 multi_rewards_tensors = torch.stack(multi_rewards_list)
 label_tensors = torch.stack(label_list)
 last_hidden_token_tensors = torch.stack(last_hidden_tokens_list)
-
-# samples = {
-#     "image_tokens_embedding": image_tokens_embedding_tensors,
-#     "gating_weights": gating_weights_embeddings,
-#     "multi_rewards": multi_rewards_tensors,
-#     "label": label_tensors
-# }
+image_tensors = torch.stack(images_list)
 
 samples = {
+    "images": image_tensors,
     "gating_weights": gating_weights_embeddings,
     "last_hidden_tokens": last_hidden_token_tensors,
     "multi_rewards": multi_rewards_tensors,
@@ -365,9 +364,9 @@ samples = {
 }
 
 # save_file(samples, f"/data1/felixchao/last_tokens.safetensors")
-save_file(samples, f"/data1/felixchao/last_hidden_feats.safetensors")
-print("Embeddings extracted successfully!")
+# save_file(samples, f"/data1/felixchao/last_hidden_feats.safetensors")
+# print("Embeddings extracted successfully!")
 
-train_df = train_df[["id", "feature_description"]]
+train_df = train_df[["id", "prompt"]]
 train_df.to_csv("/home/felixchaotw/mllm-physical-design/armo/dataset/train_feature_desc.csv", index=False)
 print("Feature descriptions generated successfully!")

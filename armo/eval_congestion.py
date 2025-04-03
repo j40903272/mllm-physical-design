@@ -1,4 +1,4 @@
-qimport os
+import os
 import torch
 import torch.nn as nn
 import numpy as np
@@ -19,9 +19,9 @@ from timm.models.vision_transformer import Mlp
 from timm.layers import trunc_normal_
 from torch.utils.data import DataLoader, Dataset
 from transformers import get_scheduler
-from utils.metrics import build_metric
 from pytorch_msssim import SSIM
 import models
+from diffusers import UNet2DConditionModel
 
 
 # Enable TF32 for improved performance on Ampere GPUs
@@ -347,6 +347,41 @@ class VisionDecoder(nn.Module):
             
         x = self.final_layer(x)
         return x
+    
+    
+class Unetfeats(nn.Module):
+    def __init__(self, unet_path, embed_dim=3584, latent_dim=25):
+        super(Unetfeats, self).__init__()
+        config = UNet2DConditionModel.load_config(unet_path, subfolder="unet")
+        config["in_channels"] = 3
+        config["out_channels"] = 1
+        config["sample_size"] = 256
+        config["block_out_channels"] = [
+            32, 64, 128, 128
+        ]
+        config["cross_attention_dim"] = 128
+        self.embed_dim = embed_dim
+        self.latent_dim = latent_dim
+        self.cross_attention_dim = config["cross_attention_dim"]
+        self.seq_len = 77
+        self.model = UNet2DConditionModel.from_config(config)
+        self.text_proj = Mlp(in_features=embed_dim + latent_dim * 2, hidden_features=self.cross_attention_dim * 77, out_features=self.cross_attention_dim * 77)
+        
+        
+    def forward(self, images, multi_rewards, gating_weights, image_tokens):
+        # Concatenate the inputs
+        x = torch.cat([multi_rewards, gating_weights, image_tokens], dim=1)
+        x = self.text_proj(x)
+        x = x.view(-1, self.seq_len, self.cross_attention_dim)
+        
+        # Pass through the model
+        out = self.model(
+            sample=images,
+            timestep=0,
+            encoder_hidden_states=x,
+        ).sample
+        
+        return F.sigmoid(out)
             
             
 # Set up argument parser
@@ -412,7 +447,7 @@ print("Loading Decoder...")
 if args.baseline == "pure":
     decoder = VisionDecoder([512, 256, 128, 64, 32, 16, 8], embed_dim=args.embed_dim)
 else:
-    decoder = VAEDecoder([512, 256, 128, 64, 32, 16, 8], embed_dim=args.embed_dim, latent_dim=25)
+    decoder = Unetfeats(unet_path="/data1/felixchao/diffusion", embed_dim=args.embed_dim, latent_dim=25)
 decoder.load_state_dict(torch.load(args.decoder_path, weights_only=True, map_location=device))
 decoder.to(device)
 decoder.eval()
@@ -509,6 +544,8 @@ else:
         label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
         label_image = torch.tensor(label_image).unsqueeze(0).unsqueeze(1).float().to(device)
         batch_image = numpy_images.transpose(2,0,1)
+        image_tensors = torch.tensor(batch_image).unsqueeze(0).float().to(device)
+        image_tensors = image_tensors * 2.0 - 1.0
         image_features = []
         
         cur_msgs.append(system_message)
@@ -545,18 +582,12 @@ else:
             prompt_embedding = last_hidden_state[gating_token_position].float()
             last_token_embedding = last_hidden_state[-1].float()
             
-            # Find the position of the image token and extract embeddings
-            image_start_position = find_token_for_image(
-                input_ids[0].tolist(), processor.tokenizer.im_start_id
-            )
-            # Checking the vision tokens length is fixed
-            image_tokens_embedding = last_hidden_state[image_start_position:gating_token_position+1].float()
-            
             gating_weights = gating_network(prompt_embedding.unsqueeze(0))
             multi_rewards = last_token_embedding.unsqueeze(0) @ regression_layer.T
             
-            prediction = decoder(multi_rewards, gating_weights, image_tokens_embedding.unsqueeze(0))
+            prediction = decoder(image_tensors, multi_rewards, gating_weights, last_token_embedding.unsqueeze(0))
             ssim = ssim_fn(prediction, label_image)
+            print(f"SSIM: {ssim.item()}")
             metric += ssim.item()
 
 print("===> Avg. {}: {:.4f}".format("SSIM", metric / len(testing_data))) 
