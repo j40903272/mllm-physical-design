@@ -29,31 +29,26 @@ torch.backends.cudnn.allow_tf32 = True
 
 # Define the attributes for multi-objective reward modeling
 attributes = [
-    'rudy_gradient_variability',
-    'clustered_macro_distance_std',
-    'rudy_pin_clustering_coefficient',
-    'macro_density_gradient',
-    'macro_aspect_ratio_variance',
-    'macro_compactness_index',
-    'rudy_pin_compaction_ratio',
-    'macro_variability_coefficient',
-    'macro_symmetry_coefficient',
-    'macro_cluster_density_contrast',
-    'rudy_pin_distribution_kurtosis',
-    'localized_rudy_variability_coefficient',
-    'macro_distribution_clarity_index',
-    'rudy_direction_consistency_index',
-    'rudy_pin_area_masking_index',
-    'rudy_pin_gradient_convergence',
-    'rudy_intensity_symmetry_index',
-    'rudy_deviation_effect_index',
-    'demarcated_macro_proximity_index',
-    'macro_surface_irregularity_index',
-    'macro_rudy_boundary_interaction_index',
-    'pin_density_peak_contrast',
-    'rudy_pin_density_flux_index',
-    'high_density_rudy_ratio',
-    'high_density_rudy_pin_ratio'
+ 'max_congestion_ripple',
+ 'macro_interference_zone',
+ 'macro_compactness_index',
+ 'cell_density_variance_gradient',
+ 'mean_macro_proximity',
+ 'congestion_gradient',
+ 'cell_density_anisotropy',
+ 'mean_eGR_local_variability',
+ 'diagonal_cell_density_gradient',
+ 'mean_cell_density_fluctuation',
+ 'macro_transition_band',
+ 'cell_density_skewness',
+ 'cell_density_skewness_gradient',
+ 'macro_interaction_perimeter',
+ 'cell_density_fluctuation_balance',
+ 'congestion_pressure_fluctuation',
+ 'congestion_variability_throughout_hierarchy',
+ 'congestion_transition_amplitude',
+ 'cell_density_dipole',
+ 'mean_eGR_local_adjacent_cohesion'
 ]
 
 
@@ -208,9 +203,9 @@ def features_description(gating_weights, multi_rewards, label):
 # Set up argument parser
 parser = ArgumentParser()
 parser.add_argument("--model_path", type=str, default="/data1/felixchao/minicpm")
-parser.add_argument("--regression_layer_path", type=str, default="/home/felixchaotw/mllm-physical-design/armo/regression_weights/MiniCPM-V-2_6_ArmoRM-Multi-Objective-Data-v0.1.pt")
-parser.add_argument("--gating_network_path", type=str, default="/home/felixchaotw/mllm-physical-design/armo/gating_weights/config_gating_network_MiniCPM-V-2_6.pt")
-parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/armo/dataset/train_df.csv")
+parser.add_argument("--regression_layer_path", type=str, default="/home/felixchaotw/mllm-physical-design/DRV/regression_weights/MiniCPM-V-2_6_ArmoRM-Multi-Objective-Data-v0.1.pt")
+parser.add_argument("--gating_network_path", type=str, default="/home/felixchaotw/mllm-physical-design/DRV/gating_weights/config_gating_network_minicpm.pt")
+parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/DRV/dataset/test_df_b.csv")
 parser.add_argument("--device", type=int, default=0)
 parser.add_argument("--logit_scale", type=float, default=1)
 parser.add_argument("--temperature", type=float, default=10)
@@ -284,10 +279,10 @@ last_hidden_tokens_list = []
 for i, example in tqdm(train_df.iterrows(), desc="Test cases"):
     cur_msgs = []
     system_message = id_to_configs(example["id"])
-    user_message = "Can you predict the congestion level of this sample from the given images?"
+    user_message = "Can you predict the DRC violations of this design from the given images?"
     image_id = example["id"]
-    numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
-    label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
+    numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/feature/{image_id}")
+    label_image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/label/{image_id}").squeeze()
     label = torch.tensor(label_image).float()
     batch_image = numpy_images.transpose(2,0,1)
     image_tensor = torch.tensor(batch_image).float()
@@ -376,13 +371,14 @@ image_tensors = torch.stack(images_list)
 #     "label": label_tensors
 # }
 
-samples = {
-    "vlm_tokens": image_tokens_embedding_tensors,
-}
+# samples = {
+#     "vlm_tokens": image_tokens_embedding_tensors,
+# }
 
-save_file(samples, f"/data1/felixchao/vlm_tokens.safetensors")
-print("Embeddings extracted successfully!")
+# save_file(samples, f"/data1/felixchao/vlm_tokens.safetensors")
+# print("Embeddings extracted successfully!")
 
 train_df = train_df[["id", "prompt", "config"]]
-train_df.to_csv("/home/felixchaotw/mllm-physical-design/armo/dataset/train_feature_desc.csv", index=False)
+train_df.to_csv("/home/felixchaotw/mllm-physical-design/DRV/dataset/test_feature_desc_b.csv", index=False)
+# train_df.to_csv("/home/felixchaotw/mllm-physical-design/DRV/dataset/train_feature_desc.csv", index=False)
 print("Feature descriptions generated successfully!")

@@ -20,35 +20,29 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig, AutoProcessor
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-# Define the attributes for multi-objective reward modeling
+# Define attributes (reward objectives)
 attributes = [
-    'rudy_gradient_variability',
-    'clustered_macro_distance_std',
-    'rudy_pin_clustering_coefficient',
-    'macro_density_gradient',
-    'macro_aspect_ratio_variance',
-    'macro_compactness_index',
-    'rudy_pin_compaction_ratio',
-    'macro_variability_coefficient',
-    'macro_symmetry_coefficient',
-    'macro_cluster_density_contrast',
-    'rudy_pin_distribution_kurtosis',
-    'localized_rudy_variability_coefficient',
-    'macro_distribution_clarity_index',
-    'rudy_direction_consistency_index',
-    'rudy_pin_area_masking_index',
-    'rudy_pin_gradient_convergence',
-    'rudy_intensity_symmetry_index',
-    'rudy_deviation_effect_index',
-    'demarcated_macro_proximity_index',
-    'macro_surface_irregularity_index',
-    'macro_rudy_boundary_interaction_index',
-    'pin_density_peak_contrast',
-    'rudy_pin_density_flux_index',
-    'high_density_rudy_ratio',
-    'high_density_rudy_pin_ratio'
+ "horizontal_power_distribution_symmetry",
+ "mean_power_sca",
+ "heat_intensity_correlation",
+ "central_power_saturation",
+ "vertical_power_distribution_symmetry",
+ "proximity_power_pattern_asymmetry",
+ "macro_power_proximity",
+ "mean_power_density_deviation",
+ "edge_power_intensity",
+ "power_sink_effect",
+ "mean_power_all",
+ "mean_power_i",
+ "power_balance_ratio",
+ "power_gradient_variation",
+ "localized_coupling_variability",
+ "power_intensity_anomaly_detection",
+ "localized_gradient_intensity",
+ "spatial_correlation_power_i",
+ "uniformity_index_power_i",
+ "spatial_density_power_i"
 ]
-
 
 default = {
         "freq" : {
@@ -659,7 +653,7 @@ for step in tqdm(range(args.n_steps)):
         if results["SRCC"].statistic > max_acc:
             max_acc = results["SRCC"].statistic
             # Save the trained gating network
-            save_path = f"/home/felixchaotw/mllm-physical-design/armo/gating_weights/config_gating_network_{args.model_name}.pt"
+            save_path = f"/home/felixchaotw/mllm-physical-design/IR_Drop/gating_weights/config_gating_network_{args.model_name}.pt"
             torch.save(gating_network.state_dict(), save_path)
             print(f"Saved gating network to {save_path}")
             

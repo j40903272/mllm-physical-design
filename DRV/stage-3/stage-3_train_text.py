@@ -22,6 +22,7 @@ from pytorch_msssim import SSIM
 from diffusers import UNet2DConditionModel
 from transformers import T5EncoderModel, AutoTokenizer
 from torchvision import transforms
+from sklearn.metrics import accuracy_score, precision_score, f1_score
 
 
 # Enable TF32 for improved performance on Ampere GPUs
@@ -33,7 +34,7 @@ class Unetfeats(nn.Module):
     def __init__(self, unet_path, text_encoder_path, embed_dim=3584, latent_dim=25):
         super(Unetfeats, self).__init__()
         config = UNet2DConditionModel.load_config(unet_path, subfolder="unet")
-        config["in_channels"] = 3
+        config["in_channels"] = 9
         config["out_channels"] = 1
         config["sample_size"] = 256
         config["block_out_channels"] = [
@@ -64,19 +65,6 @@ class Unetfeats(nn.Module):
         return F.sigmoid(out)
 
 
-
-def validation(model, test_loader, device, ssim_fn):
-    model.eval()
-    val_ssim_score = 0.0
-    with torch.no_grad():
-        for image_tokens, gating_weights, multi_rewards, labels in test_loader:
-            image_tokens, gating_weights, multi_rewards, labels = image_tokens.to(device), gating_weights.to(device), multi_rewards.to(device), labels.to(device)
-            output = model(multi_rewards, gating_weights, image_tokens)
-            val_ssim_score += ssim_fn(output, labels.unsqueeze(1))
-            
-    return val_ssim_score / len(test_loader)
-
-
 def data_collator(batch):
     images = [item['image'] for item in batch]
     labels = [item['label'] for item in batch]
@@ -94,7 +82,7 @@ def data_collator(batch):
     
 
 class CongestionDataset(Dataset):
-    def __init__(self, df, transform=None):
+    def __init__(self, df, transform=None, split="train"):
         self.df = df
         self.transform = transform
         self.prompts = df['prompt'].tolist()
@@ -102,12 +90,14 @@ class CongestionDataset(Dataset):
         self.labels = []
         for i, example in tqdm(df.iterrows()):
             image_id = example["id"]
-            image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
-            label = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
-            image = Image.fromarray(np.uint8(image * 255)).convert('RGB')
+            image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/feature/{image_id}")
+            label = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/label/{image_id}").squeeze()
             if transform:
                 image = transform(image).float()
-                label = transform(label).float()
+                if split == "train":
+                    label = torch.where(transform(label).float() >= 0.1, 1.0, 0.0) 
+                else:
+                    label = transform(label).float()
             
             self.images.append(image)
             self.labels.append(label)
@@ -121,16 +111,52 @@ class CongestionDataset(Dataset):
             'label': self.labels[idx],
             'prompt': self.prompts[idx]
         }
+        
+
+def validate(model, valid_loader, device):
+    model.eval()
+    ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+    total_ssim = 0.0
+    acc = 0.0
+    precision = 0.0
+    f1 = 0.0
+    with torch.no_grad():
+        for batch in valid_loader:
+            prompts = batch["prompts"]
+            images = batch["images"].to(device)
+            images = images * 2.0 - 1.0
+            labels = batch["labels"].to(device)
+            input_ids = model.tokenizer(prompts, return_tensors="pt", padding="max_length", max_length=512, truncation=True).input_ids.to(device)
+            
+            output = model(images, input_ids)
+            ssim_score = ssim_fn(output, labels).item()
+            total_ssim += ssim_score
+            print("SSIM score:", ssim_score)
+            img1 = output.squeeze().cpu().numpy()
+            img2 = labels.squeeze().cpu().numpy()
+            img2_flatten = img2.flatten() >= 0.1
+            img1_flatten = img1.flatten() >= 0.1
+            acc_score = accuracy_score(img2_flatten, img1_flatten)
+            acc += acc_score
+            prec_score = precision_score(img2_flatten, img1_flatten)
+            precision += prec_score
+            f1_sc = f1_score(img2_flatten, img1_flatten)
+            f1 += f1_sc
+            print(f"Accuracy: {acc_score}")
+            print(f"Precision: {prec_score}")
+            print(f"F1 Score: {f1_sc}")
+            
+    return total_ssim / len(valid_loader)
 
 
 # Set up argument parser
 parser = ArgumentParser()
 parser.add_argument("--unet_path", type=str, default="/data1/felixchao/diffusion")
 parser.add_argument("--text_encoder_path", type=str, default="/data1/felixchao/sd3_5")
-parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/armo/dataset/train_feature_desc.csv")
+parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/DRV/dataset/train_feature_desc.csv")
 parser.add_argument("--batch_size", type=int, default=2)
 parser.add_argument("--epochs", type=int, default=40)
-parser.add_argument("--lr", type=float, default=2e-4)
+parser.add_argument("--lr", type=float, default=1e-4)
 parser.add_argument("--latent_dim", type=int, default=25)
 parser.add_argument("--device", type=int, default=0)
 parser.add_argument("--embed_dim", type=int, default=3584)
@@ -142,6 +168,7 @@ device = f"cuda:{args.device}" if args.device >= 0 else "cpu"
 # Load embeddings
 print("Loading dataset...")
 train_df = pd.read_csv(args.dataset)
+train_df, valid_df = train_test_split(train_df, test_size=0.05, random_state=0, shuffle=True)
 
 # Load Dataset
 print("Dataset preparing...")
@@ -149,8 +176,16 @@ print("Dataset preparing...")
 train_dataset = CongestionDataset(
     train_df,
     transforms.Compose([
-            transforms.ToTensor(),
+        transforms.ToTensor(),
     ])
+)
+
+valid_dataset = CongestionDataset(
+    valid_df,
+    transforms.Compose([
+        transforms.ToTensor(),
+    ]),
+    split="test",
 )
 
 train_loader = DataLoader(
@@ -161,14 +196,25 @@ train_loader = DataLoader(
     num_workers=0,
 )
 
+valid_loader = DataLoader(
+    valid_dataset,
+    batch_size=2,
+    shuffle=False,
+    collate_fn=data_collator,
+    num_workers=0,
+)
+
 print("Training data size:", len(train_dataset))
 
 # Initialize model
 
 model = Unetfeats(unet_path=args.unet_path, text_encoder_path=args.text_encoder_path, embed_dim=args.embed_dim, latent_dim=args.latent_dim).to(device)
+model.load_state_dict(torch.load("/data1/felixchao/DRC/checkpoint-best.pth", weights_only=True, map_location=device))
+model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=0)
-loss_fn = nn.MSELoss()
+# loss_fn = nn.MSELoss()
+loss_fn = nn.BCELoss()
 num_epochs = args.epochs
 num_training_steps = num_epochs * len(train_loader)
 lr_scheduler = get_scheduler(
@@ -178,8 +224,8 @@ lr_scheduler = get_scheduler(
 # Train model
 print("Start Training...")
 
-best_ssim = 0.0
-ssim_fn = SSIM(data_range=1, size_average=True, channel=1)
+best_ssim = 0.80
+global_step = 0
 
 for epoch in tqdm(range(num_epochs), desc="Training Epochs"):
     model.train()
@@ -201,8 +247,16 @@ for epoch in tqdm(range(num_epochs), desc="Training Epochs"):
         optimizer.step()
         lr_scheduler.step()
         
-    print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_loader)}")  
+        if global_step % 500 == 0:
+            ssim_score = validate(model, valid_loader, device)
+            print(f"Validation SSIM at step {global_step}: {ssim_score}")
+            if ssim_score > best_ssim:
+                best_ssim = ssim_score
+                torch.save(model.state_dict(), f"/data1/felixchao/DRC/checkpoint-best.pth")
+                print("Best model saved with SSIM:", best_ssim)
+                
+        global_step += 1
      
     model.eval()
-    torch.save(model.state_dict(), f"/data1/felixchao/output/checkpoint-{epoch}.pth")
+    torch.save(model.state_dict(), f"/data1/felixchao/DRC/checkpoint-final-{epoch}.pth")
     print("Model saved")

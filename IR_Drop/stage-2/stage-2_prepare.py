@@ -104,7 +104,7 @@ parser = ArgumentParser()
 parser.add_argument(
     "--model_path",
     type=str,
-    default="/data1/felixchao/minicpm",
+    default="openbmb/MiniCPM-V-2_6",
     help="Path to the pre-trained model (HuggingFace path or local folder)",
 )
 parser.add_argument(
@@ -113,7 +113,7 @@ parser.add_argument(
 parser.add_argument(
     "--dataset_path",
     type=str,
-    default="/home/felixchaotw/mllm-physical-design/DRV/dataset/preference_df.csv",
+    default="/home/felixchaotw/mllm-physical-design/IR_Drop/dataset/preference_df.csv",
     help="Path to the dataset (HuggingFace path or local folder)",
 )
 parser.add_argument(
@@ -142,7 +142,7 @@ args = parser.parse_args()  # Parse the provided command-line arguments
 # Verify that the model family is passed correctly
 config = AutoConfig.from_pretrained(args.model_path, trust_remote_code=True)
 
-save_path = f"/home/felixchaotw/mllm-physical-design/DRV/dataset/config_paired_embeddings"
+save_path = f"/home/felixchaotw/mllm-physical-design/IR_Drop/dataset/config_paired_embeddings"
 
 # Load and prepare the dataset
 ds = pd.read_csv(args.dataset_path)
@@ -156,9 +156,9 @@ if args.n_shards > 1:
 device = f"cuda:{args.device}"
 model = AutoModel.from_pretrained(
     args.model_path,
-    torch_dtype=torch.bfloat16,  # Use bfloat16 precision for model weights to save memory
+    dtype=torch.bfloat16,  # Use bfloat16 precision for model weights to save memory
     device_map=device,
-    attn_implementation="flash_attention_2",  # Specify the attention implementation for efficiency
+    attn_implementation='sdpa', # Specify the attention implementation for efficiency
     trust_remote_code=True,
 )
 
@@ -183,10 +183,10 @@ for _, example in tqdm(ds.iterrows(), desc="Processing dataset"):
     chosen_msgs.append(c_system_message)
     rejected_msgs.append(r_system_message)
     
-    user_message = "Can you predict the DRC violations of this design from the given images?"
-    c_numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/feature/{chosen_id}")
-    r_numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/feature/{rejected_id}")
-    
+    user_message = "Can you predict the IR Drop violations of this design from the given images?"
+    c_numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/IR_drop/feature/{chosen_id}")
+    r_numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/IR_drop/feature/{rejected_id}")
+
     c_batch_image = c_numpy_images.transpose(2,0,1)
     r_batch_image = r_numpy_images.transpose(2,0,1)
     c_image_features = []

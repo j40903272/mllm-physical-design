@@ -102,8 +102,8 @@ class CongestionDataset(Dataset):
         self.labels = []
         for i, example in tqdm(df.iterrows()):
             image_id = example["id"]
-            image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/feature/{image_id}")
-            label = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/congestion/label/{image_id}").squeeze()
+            image = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/IR_Drop/feature/{image_id}")
+            label = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/IR_Drop/label/{image_id}").squeeze()
             image = Image.fromarray(np.uint8(image * 255)).convert('RGB')
             if transform:
                 image = transform(image).float()
@@ -127,7 +127,7 @@ class CongestionDataset(Dataset):
 parser = ArgumentParser()
 parser.add_argument("--unet_path", type=str, default="/data1/felixchao/diffusion")
 parser.add_argument("--text_encoder_path", type=str, default="/data1/felixchao/sd3_5")
-parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/armo/dataset/train_feature_desc.csv")
+parser.add_argument("--dataset", type=str, default="/home/felixchaotw/mllm-physical-design/IR_Drop/dataset/train_feature_desc.csv")
 parser.add_argument("--batch_size", type=int, default=2)
 parser.add_argument("--epochs", type=int, default=40)
 parser.add_argument("--lr", type=float, default=2e-4)

@@ -427,4 +427,4 @@ results = evaluate_design(testing_df)
 print("Evaluation results:")
 print(results)
 
-testing_df.to_csv(f"/home/felixchaotw/mllm-physical-design/armo/results/{design_type}_results.csv", index=False)
+testing_df.to_csv(f"/home/felixchaotw/mllm-physical-design/DRC/results/{design_type}_results.csv", index=False)

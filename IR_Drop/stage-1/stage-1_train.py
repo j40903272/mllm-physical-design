@@ -37,13 +37,13 @@ parser.add_argument(
 parser.add_argument(
     "--embeddings_dir",
     type=str,
-    default="/home/felixchaotw/mllm-physical-design/DRV/dataset/train.safetensors",
+    default="/home/felixchaotw/mllm-physical-design/IR_Drop/dataset/train.safetensors",
     help="Path to the directory containing embedding files. If not provided, defaults to HOME/data/ArmoRM/embeddings/<model_name>/<dataset_name>",
 )
 parser.add_argument(
     "--output_dir",
     type=str,
-    default="/home/felixchaotw/mllm-physical-design/DRV/regression_weights/",
+    default="/home/felixchaotw/mllm-physical-design/IR_Drop/regression_weights/",
     help="Path to save the regression weights. If not provided, defaults to HOME/data/ArmoRM/regression_weights/",
 )
 args = parser.parse_args()
@@ -57,26 +57,26 @@ args.dataset_name = args.dataset_path.split("/")[-1]
 # ---------------------------
 # Define the reward attributes as per the method overview in README.md
 attributes = [
- 'max_congestion_ripple',
- 'macro_interference_zone',
- 'macro_compactness_index',
- 'cell_density_variance_gradient',
- 'mean_macro_proximity',
- 'congestion_gradient',
- 'cell_density_anisotropy',
- 'mean_eGR_local_variability',
- 'diagonal_cell_density_gradient',
- 'mean_cell_density_fluctuation',
- 'macro_transition_band',
- 'cell_density_skewness',
- 'cell_density_skewness_gradient',
- 'macro_interaction_perimeter',
- 'cell_density_fluctuation_balance',
- 'congestion_pressure_fluctuation',
- 'congestion_variability_throughout_hierarchy',
- 'congestion_transition_amplitude',
- 'cell_density_dipole',
- 'mean_eGR_local_adjacent_cohesion'
+ "horizontal_power_distribution_symmetry",
+ "mean_power_sca",
+ "heat_intensity_correlation",
+ "central_power_saturation",
+ "vertical_power_distribution_symmetry",
+ "proximity_power_pattern_asymmetry",
+ "macro_power_proximity",
+ "mean_power_density_deviation",
+ "edge_power_intensity",
+ "power_sink_effect",
+ "mean_power_all",
+ "mean_power_i",
+ "power_balance_ratio",
+ "power_gradient_variation",
+ "localized_coupling_variability",
+ "power_intensity_anomaly_detection",
+ "localized_gradient_intensity",
+ "spatial_correlation_power_i",
+ "uniformity_index_power_i",
+ "spatial_density_power_i"
 ]
 
 # Set the home directory

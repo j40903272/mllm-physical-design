@@ -22,26 +22,26 @@ torch.backends.cudnn.allow_tf32 = (
 
 # Define attributes (reward objectives)
 attributes = [
- 'max_congestion_ripple',
- 'macro_interference_zone',
- 'macro_compactness_index',
- 'cell_density_variance_gradient',
- 'mean_macro_proximity',
- 'congestion_gradient',
- 'cell_density_anisotropy',
- 'mean_eGR_local_variability',
- 'diagonal_cell_density_gradient',
- 'mean_cell_density_fluctuation',
- 'macro_transition_band',
- 'cell_density_skewness',
- 'cell_density_skewness_gradient',
- 'macro_interaction_perimeter',
- 'cell_density_fluctuation_balance',
- 'congestion_pressure_fluctuation',
- 'congestion_variability_throughout_hierarchy',
- 'congestion_transition_amplitude',
- 'cell_density_dipole',
- 'mean_eGR_local_adjacent_cohesion'
+ "horizontal_power_distribution_symmetry",
+ "mean_power_sca",
+ "heat_intensity_correlation",
+ "central_power_saturation",
+ "vertical_power_distribution_symmetry",
+ "proximity_power_pattern_asymmetry",
+ "macro_power_proximity",
+ "mean_power_density_deviation",
+ "edge_power_intensity",
+ "power_sink_effect",
+ "mean_power_all",
+ "mean_power_i",
+ "power_balance_ratio",
+ "power_gradient_variation",
+ "localized_coupling_variability",
+ "power_intensity_anomaly_detection",
+ "localized_gradient_intensity",
+ "spatial_correlation_power_i",
+ "uniformity_index_power_i",
+ "spatial_density_power_i"
 ]
 
 default = {
@@ -169,9 +169,9 @@ for _, example in tqdm(ds.iterrows(), desc="Processing dataset"):
     cur_msgs = []
     system_message = id_to_configs(example["id"])
     print(system_message)
-    user_message = "Can you predict the DRC violations of this design from the given images?"
+    user_message = "Can you predict the IR Drop violations of this design from the given images?"
     image_id = example["id"]
-    numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/DRC/feature/{image_id}")
+    numpy_images = np.load(f"/data2/NVIDIA/CircuitNet-N28/Dataset/IR_drop/feature/{image_id}")
     batch_image = numpy_images.transpose(2,0,1)
     image_features = []
     
@@ -219,7 +219,7 @@ model_name = args.model_path.split("/")[
 dataset_name = args.dataset_path.split("/")[
     -1
 ]  # Extract the dataset name from the dataset path
-save_path = "/home/felixchaotw/mllm-physical-design/DRV/dataset/"
+save_path = "/home/felixchaotw/mllm-physical-design/IR_Drop/dataset/"
 os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
 
 # Save the embeddings and labels in a safetensors file with shard indexing
